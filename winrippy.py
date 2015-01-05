@@ -14,17 +14,20 @@ class Image(object):
         self.basename           = os.path.basename(url)
         self.image_obj          = pytsk3.Img_Info(url)
         self.partition_table    = self.IterateVolumes(self.image_obj)
-        self.filesystems        = self.IterateFileSystems(self.image_obj, self.partition_table)
+        self.filesystems        = self.IterateFileSystems(self.image_obj, 
+                                                        self.partition_table)
         
     def IterateVolumes(self, image_obj):
         '''This function takes an image object and lists all of the partitions
-        in the image. It creates a tuple of the partition table and returns it in a list.'''
+        in the image. It creates a tuple of the partition table and returns 
+        it in a list.'''
         partition_table = []
     
         volumes = pytsk3.Volume_Info(image_obj)
     
         for part in volumes:
-            partition_table.append((part.addr, part.desc.decode('utf-8'), part.start, part.len))
+            partition_table.append((part.addr, part.desc.decode('utf-8'), 
+                                    part.start, part.len))
         return partition_table
 
     def IdentifyOffsets(self, partition_table):
@@ -63,12 +66,14 @@ class Filesystem(Image):
             self.root_inode = None  
         
     def ExtractFileByInode(self, file_entry, full_path=''):
-        '''This function will icat a file based on its inode. Data is printed to the console.'''
+        '''This function will icat a file based on its inode. Data is 
+        printed to the console.'''
         
         try:
             file_entry['file_obj'] = self.fs.open_meta(inode=file_entry['inode'])
         except:
-            print '[{0}] [Error] Cannot open file {1}'.format(self.basename, file_entry['inode'])
+            print '[{0}] [Error] Cannot open file {1}'.format(self.basename, 
+                                                        file_entry['inode'])
             return
             
         offset = 0
@@ -88,17 +93,20 @@ class Filesystem(Image):
         else:
             rel_path = full_path
             
-        output_path = os.path.join(output_directory, self.basename, str(self.partition_number), rel_path)
+        output_path = os.path.join(output_directory, self.basename, 
+                                        str(self.partition_number), rel_path)
         output_file = os.path.join(output_path, file_entry['filename'])
         
         self.CheckOutput(output_path)
         
         try:
-            print '[{0}] Copying {1} >> {2}'.format(self.basename, full_path, output_file)
+            print '[{0}] Copying {1} >> {2}'.format(self.basename, full_path, 
+                                                    output_file)
             with open(output_file, 'wb') as output:
                 output.write(data)
         except:
-            print '[{0}] [Error] Error writing {1} in Partition {1} : {2}'.format(self.basename, file_entry['filename'], self.partition_number, self.partition_name)
+            print '[{0}] [Error] Error writing {1} in Partition {1} : {2}'.format(self.basename, 
+                file_entry['filename'], self.partition_number, self.partition_name)
     
     def ProcessFile(self, file_obj):
         tsk_name = file_obj.info.name
@@ -121,7 +129,8 @@ class Filesystem(Image):
         try:
             d = self.fs.open_dir(path=directory)
         except:
-            #print '[{0}] [Error] Error opening directory {1} in Partition {2} : {3}'.format(self.basename, directory, self.partition_number, self.partition_name)
+            print '[{0}] [Error] Cannot find directory {1} in Partition {2} : {3}'.format(self.basename, 
+                directory, self.partition_number, self.partition_name)
             return
 
         for f in d:
@@ -140,7 +149,8 @@ class Filesystem(Image):
         try:
             f = self.fs.open(full_path)
         except:
-            print '[{0}] Cannot find file {1} in Partition {2} : {3}'.format(self.basename, full_path, self.partition_number, self.partition_name)
+            print '[{0}] Cannot find file {1} in Partition {2} : {3}'.format(self.basename, 
+                full_path, self.partition_number, self.partition_name)
             return
             
         file_entry = self.ProcessFile(f)
@@ -157,7 +167,8 @@ class Filesystem(Image):
             if file_entry is None:
                 continue
             else:
-                print '[{0}] Extracting {1} : {2}'.format(self.basename, file, file_entry['inode'])
+                print '[{0}] Extracting {1} : {2}'.format(self.basename, file, 
+                                                        file_entry['inode'])
                 
                 target_directory = os.path.dirname(file)
                 self.ExtractFileByInode(file_entry, full_path=target_directory)
@@ -172,7 +183,8 @@ class Filesystem(Image):
             if not os.path.exists(output_path):
                 os.makedirs(output_path)
         except:
-            print '[{0}] [Error] Error Creating Output Directory: {1}'.format(self.basename, output_directory)
+            print '[{0}] [Error] Error Creating Output Directory: {1}'.format(self.basename, 
+                                                            output_directory)
         
     def WalkFilesystem(self):
         
@@ -189,7 +201,8 @@ class Filesystem(Image):
     def RecurseDirectories(self, cur_inode, dir_path):
         
         if not cur_inode:
-            print '[{0}] Parsing {1} complete!'.format(self.basename, self.partition_name)
+            print '[{0}] Parsing {1} complete!'.format(self.basename, 
+                                                        self.partition_name)
                 
         directories = []
         
@@ -212,15 +225,14 @@ class Filesystem(Image):
             elif file_entry['file_type'] == pytsk3.TSK_FS_META_TYPE_REG:
                 digest = self.HashFile(file_entry)
                 self.CreateDirectoryListing(file_entry['inode'], full_path, digest)
-                #print '{0} {1} {2} {3} {4}'.format(self.basename, self.partition_number, file_entry['inode'], full_path, digest)
+                #print '{0} {1} {2} {3} {4}'.format(self.basename, 
+                #    self.partition_number, file_entry['inode'], full_path, digest)
                 if file_entry['filename'] in key_files:
                     self.ExtractFileByInode(file_entry, full_path=dir_path)
         
         for inode, full_path in directories:
             self.RecurseDirectories(inode, full_path)
             
-        
-        
     def DetectKeyDirectories(self, dir_path):
         if dir_path in target_dirs:
             self.ExtractDirectoryByName(dir_path)
@@ -244,7 +256,8 @@ class Filesystem(Image):
         return digest
         
     def CreateDirectoryListing(self, inode, dir_path, digest):
-        directory_listing = os.path.join(output_directory, self.basename, 'DirectoryListing-{0}.csv'.format(self.basename))
+        directory_listing = os.path.join(output_directory, self.basename, 
+                            'DirectoryListing-{0}.csv'.format(self.basename))
         
         row = [self.basename, str(self.partition_number), inode, dir_path, digest]
         try:
@@ -261,8 +274,8 @@ class Filesystem(Image):
 def Automate(image_file):
     for fs_entry in i.filesystems:
         filesystem = Filesystem(i.basename, fs_entry)
-        print '[{0}] Opening Partition {1} : {2} at offset {3}'.format(i.basename, filesystem.partition_number, 
-            filesystem.partition_name, filesystem.partition_block_offset)
+        print '[{0}] Opening Partition {1} : {2} at offset {3}'.format(i.basename, 
+        filesystem.partition_number, filesystem.partition_name, filesystem.partition_block_offset)
 
         if quick_flag:
             filesystem.QuickMode()
@@ -270,12 +283,13 @@ def Automate(image_file):
             filesystem.WalkFilesystem()
             
 if __name__ == '__main__':
-    '''This is the primary logic for the script. This function iterates over all available partitions
-    and attempts to extract target files and directories.'''
+    '''This is the primary logic for the script. This function iterates over 
+    all available partitions and attempts to extract target files and directories.'''
     
     parser = argparse.ArgumentParser(description='Description',
         epilog='Epilogue')
-    parser.add_argument('--quick', help='extract specific files and locations, do not walk file system.', action='store_true')
+    parser.add_argument('--quick', help='''extract specific files and locations, 
+        do not walk file system.''', action='store_true')
     parser.add_argument('outputdirectory', help='path to output directory')
     parser.add_argument('imagefiles', help='path to image files', nargs='+')
     args = parser.parse_args()
@@ -289,7 +303,9 @@ if __name__ == '__main__':
     global target_files
     global key_files
     
-    target_dirs         = ['/Windows/System32/config', '/Windows/Tasks', '/Windows/System32/winevt', '/Windows/System32/Drivers/etc', '/Windows/Prefetch']
+    target_dirs         = ['/Windows/System32/config', '/Windows/Tasks', 
+        '/Windows/System32/winevt', '/Windows/System32/Drivers/etc', 
+        '/Windows/Prefetch']
     target_files        = ['/$MFT', '/pagefile.sys', '/hiberfil.sys', '/$Logfile']
     key_files           = ['NTUSER.DAT', 'usrclass.dat', 'Thumbs.db']
     
