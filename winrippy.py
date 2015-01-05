@@ -5,6 +5,8 @@ import os
 import argparse
 import hashlib
 import csv
+import multiprocessing
+import logging
 
 class Image(object):
     def __init__(self, url):
@@ -86,7 +88,7 @@ class Filesystem(Image):
         else:
             rel_path = full_path
             
-        output_path = os.path.join(output_directory, self.basename, rel_path)
+        output_path = os.path.join(output_directory, self.basename, str(self.partition_number), rel_path)
         output_file = os.path.join(output_path, file_entry['filename'])
         
         self.CheckOutput(output_path)
@@ -96,8 +98,7 @@ class Filesystem(Image):
             with open(output_file, 'wb') as output:
                 output.write(data)
         except:
-            print '[{0}] [Error] Error writing {1} in Partition {1} : {2}'.format(self.basename, file_entry['filename'],
-                self.partition_number, self.partition_name)
+            print '[{0}] [Error] Error writing {1} in Partition {1} : {2}'.format(self.basename, file_entry['filename'], self.partition_number, self.partition_name)
     
     def ProcessFile(self, file_obj):
         tsk_name = file_obj.info.name
@@ -120,8 +121,7 @@ class Filesystem(Image):
         try:
             d = self.fs.open_dir(path=directory)
         except:
-            print '[{0}] [Error] Error opening directory {1} in Partition {2} : {3}'.format(self.basename, directory, self.partition_number,
-                self.partition_name)
+            #print '[{0}] [Error] Error opening directory {1} in Partition {2} : {3}'.format(self.basename, directory, self.partition_number, self.partition_name)
             return
 
         for f in d:
@@ -140,8 +140,7 @@ class Filesystem(Image):
         try:
             f = self.fs.open(full_path)
         except:
-            print '[{0}] [Error] Cannot find file {1} in Partition {2} : {3}'.format(self.basename, full_path, 
-                self.partition_number, self.partition_name)
+            print '[{0}] Cannot find file {1} in Partition {2} : {3}'.format(self.basename, full_path, self.partition_number, self.partition_name)
             return
             
         file_entry = self.ProcessFile(f)
@@ -177,6 +176,8 @@ class Filesystem(Image):
         
     def WalkFilesystem(self):
         
+        self.QuickMode()
+        
         if self.root_inode is None:
             print '[{0}] [Error] Cannot identify root inode in Parition {1} : {2}'.format(self.basename, 
                 self.partition_number, self.partition_name)
@@ -186,7 +187,10 @@ class Filesystem(Image):
             self.RecurseDirectories(cur_inode, os.path.sep)
             
     def RecurseDirectories(self, cur_inode, dir_path):
-            
+        
+        if not cur_inode:
+            print '[{0}] Parsing {1} complete!'.format(self.basename, self.partition_name)
+                
         directories = []
         
         cwd = self.fs.open_dir(inode=cur_inode)
@@ -208,13 +212,15 @@ class Filesystem(Image):
             elif file_entry['file_type'] == pytsk3.TSK_FS_META_TYPE_REG:
                 digest = self.HashFile(file_entry)
                 self.CreateDirectoryListing(file_entry['inode'], full_path, digest)
-                print '{0},{1},{2}'.format(file_entry['inode'], full_path, digest)
+                #print '{0} {1} {2} {3} {4}'.format(self.basename, self.partition_number, file_entry['inode'], full_path, digest)
                 if file_entry['filename'] in key_files:
                     self.ExtractFileByInode(file_entry, full_path=dir_path)
         
         for inode, full_path in directories:
             self.RecurseDirectories(inode, full_path)
             
+        
+        
     def DetectKeyDirectories(self, dir_path):
         if dir_path in target_dirs:
             self.ExtractDirectoryByName(dir_path)
@@ -240,50 +246,58 @@ class Filesystem(Image):
     def CreateDirectoryListing(self, inode, dir_path, digest):
         directory_listing = os.path.join(output_directory, self.basename, 'DirectoryListing-{0}.csv'.format(self.basename))
         
-        row = [inode, dir_path, digest]
-        with open(directory_listing, 'ab+') as csvfile:
-            writer = csv.writer(csvfile, delimiter=',')
-            writer.writerow(row)
+        row = [self.basename, str(self.partition_number), inode, dir_path, digest]
+        try:
+            with open(directory_listing, 'ab+') as csvfile:
+                writer = csv.writer(csvfile, delimiter=',')
+                writer.writerow(row)
+        except:
+            return
+            
+    def QuickMode(self):
+        self.ExtractTargetFiles(target_files)
+        self.ExtractTargetDirectories(target_dirs)
            
-def Main():
+def Automate(image_file):
+    for fs_entry in i.filesystems:
+        filesystem = Filesystem(i.basename, fs_entry)
+        print '[{0}] Opening Partition {1} : {2} at offset {3}'.format(i.basename, filesystem.partition_number, 
+            filesystem.partition_name, filesystem.partition_block_offset)
+
+        if quick_flag:
+            filesystem.QuickMode()
+        else:
+            filesystem.WalkFilesystem()
+            
+if __name__ == '__main__':
     '''This is the primary logic for the script. This function iterates over all available partitions
     and attempts to extract target files and directories.'''
     
     parser = argparse.ArgumentParser(description='Description',
         epilog='Epilogue')
-    parser.add_argument("outputdirectory", help="Path to Output Direcctory")
-    parser.add_argument("imagefiles", help="Path to Image Files", nargs='+')
+    parser.add_argument('--quick', help='extract specific files and locations, do not walk file system.', action='store_true')
+    parser.add_argument('outputdirectory', help='path to output directory')
+    parser.add_argument('imagefiles', help='path to image files', nargs='+')
     args = parser.parse_args()
 
     global output_directory    
     output_directory    = os.path.abspath(args.outputdirectory)
-    
+    quick_flag          = args.quick
     image_files         = args.imagefiles
     
     global target_dirs
     global target_files
     global key_files
     
-    target_dirs = ['/Windows', '/Windows/System32']
-    target_files = ['/Windows/System32/notepad.exe', '/Windows/System32/cmd.exe']
-    key_files = ['NTUSER.DAT', 'usrclass.dat', 'Thumbs.db']
+    target_dirs         = ['/Windows/System32/config', '/Windows/Tasks', '/Windows/System32/winevt', '/Windows/System32/Drivers/etc', '/Windows/Prefetch']
+    target_files        = ['/$MFT', '/pagefile.sys', '/hiberfil.sys', '/$Logfile']
+    key_files           = ['NTUSER.DAT', 'usrclass.dat', 'Thumbs.db']
+    
+    worker_processes = []
         
+    #multiprocessing.log_to_stderr(logging.DEBUG)
     for url in image_files:
         i = Image(url)
-        for fs_entry in i.filesystems:
-            filesystem = Filesystem(i.basename, fs_entry)
-            print '[{0}] Opening Partition {1} : {2} at offset {3}'.format(i.basename, filesystem.partition_number, 
-                filesystem.partition_name, filesystem.partition_block_offset)
-            
-
-
-          #Operations to be performed on each file system go in this loop.    
-          # filesystem.ExtractTargetFiles(target_files)
-          #  filesystem.ExtractTargetDirectories(target_dirs)
-            #print filesystem.root_inode
-            filesystem.WalkFilesystem()
-          #
-          #
-                   
-        
-Main()
+        process = multiprocessing.Process(target=Automate, args=(i,))
+        worker_processes.append(process)
+        process.start()
