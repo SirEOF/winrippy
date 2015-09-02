@@ -7,313 +7,173 @@ import hashlib
 import csv
 import multiprocessing
 import logging
+import pyewf
+import fnmatch
 
-class Image(object):
-    def __init__(self, url):
-        self.url                = os.path.abspath(url)
-        self.basename           = os.path.basename(url)
-        self.image_obj          = pytsk3.Img_Info(url)
-        self.partition_table    = self.IterateVolumes(self.image_obj)
-        self.filesystems        = self.IterateFileSystems(self.image_obj, 
-                                                        self.partition_table)
-        
-    def IterateVolumes(self, image_obj):
-        '''This function takes an image object and lists all of the partitions
-        in the image. It creates a tuple of the partition table and returns 
-        it in a list.'''
-        partition_table = []
-    
-        volumes = pytsk3.Volume_Info(image_obj)
-    
-        for part in volumes:
-            partition_table.append((part.addr, part.desc.decode('utf-8'), 
-                                    part.start, part.len))
-        return partition_table
+from collections import namedtuple
 
-    def IdentifyOffsets(self, partition_table):
-        '''This function takes the partition table and identifies the offsets
-        to each of its partitions.'''
-        offsets = []
-    
-        for partition in partition_table:
-            offsets.append(partition[2])
-        return offsets
+#1 - Parse arguments
+#2 - Get image info
+#3 - Get volume info
+#4 - Use image info and volume info offset to get fs_info
+#5 - Recurse directories
+#6 - Copy files
 
-    def IterateFileSystems(self, image_obj, partition_table):
-        block_size = 512
-        filesystems = []
-        for partition in partition_table:
-            vol_offset = partition[2] * block_size
-            try:
-               fs = pytsk3.FS_Info(image_obj, offset=vol_offset)
-               filesystems.append({'fs' : fs, 'partition' : partition})
-            except:
-                continue  
-        return filesystems  
-                
+#################################################################### Structs
 
-class Filesystem(Image):
-    def __init__(self, basename, fs_entry):
-        self.basename = basename
-        self.partition_number = fs_entry['partition'][0]
-        self.partition_name = fs_entry['partition'][1]
-        self.partition_block_offset = fs_entry['partition'][2]
-        self.fs = fs_entry['fs']
-        
-        if self.AccessFileByPath is not None:
-            self.root_inode = self.AccessFileByPath('/')['inode']
-        else:
-            self.root_inode = None  
-        
-    def ExtractFileByInode(self, file_entry, full_path=''):
-        '''This function will icat a file based on its inode. Data is 
-        printed to the console.'''
-        
-        try:
-            file_entry['file_obj'] = self.fs.open_meta(inode=file_entry['inode'])
-        except:
-            print '[{0}] [Error] Cannot open file {1}'.format(self.basename, 
-                                                        file_entry['inode'])
-            return
-            
-        offset = 0
-        size = file_entry['file_obj'].info.meta.size
-        BUFF_SIZE = 4096
-        data = ''
-        
-        while offset < size:
-            available_to_read = min(BUFF_SIZE, size - offset)
-            data = file_entry['file_obj'].read_random(offset, available_to_read)
-            if not data:
-                break
-            offset += len(data)
-            
-        if full_path.startswith('/'):
-            rel_path = full_path.lstrip('/')
-        else:
-            rel_path = full_path
-            
-        output_path = os.path.join(output_directory, self.basename, 
-                                        str(self.partition_number), rel_path)
-        output_file = os.path.join(output_path, file_entry['filename'])
-        
-        self.CheckOutput(output_path)
-        
-        try:
-            print '[{0}] Copying {1} >> {2}'.format(self.basename, full_path, 
-                                                    output_file)
-            with open(output_file, 'wb') as output:
-                output.write(data)
-        except:
-            print '[{0}] [Error] Error writing {1} in Partition {1} : {2}'.format(self.basename, 
-                file_entry['filename'], self.partition_number, self.partition_name)
-    
-    def ProcessFile(self, file_obj):
-        tsk_name = file_obj.info.name
-        if not tsk_name:
-            return
-        if tsk_name.flags == pytsk3.TSK_FS_NAME_FLAG_UNALLOC:
-            return
-        if not file_obj.info.meta:
-            return
-            
-        file_entry = {'file_obj' : file_obj,
-                        'filename' : tsk_name.name,
-                        'inode' : file_obj.info.meta.addr,
-                        'file_type' : file_obj.info.meta.type,
-                        'file_size' : file_obj.info.meta.size}
-        return file_entry
-            
-    def ExtractDirectoryByName(self, directory):
-        '''This function extracts all files within a given directory via icat.'''
-        try:
-            d = self.fs.open_dir(path=directory)
-        except:
-            print '[{0}] [Error] Cannot find directory {1} in Partition {2} : {3}'.format(self.basename, 
-                directory, self.partition_number, self.partition_name)
-            return
+partition = namedtuple('partition', ['image_info',
+									'volume_info', 
+									'partition_number',
+									'description',
+									'starting_offset_bytes',
+									'starting_offset_sector',
+									'partition_length'])
+#partition.__new__.__defaults__ = ('', '', '', '', '', '')
 
-        for f in d:
-            file_entry = self.ProcessFile(f)
-            if not file_entry:
-                continue
-            if file_entry['filename'] in ['$OrphanFiles', '.', '..']:
-                continue
-            if file_entry['file_type'] == pytsk3.TSK_FS_META_TYPE_DIR:
-                continue
-                
-            self.ExtractFileByInode(file_entry, full_path=directory)
-    
-    def AccessFileByPath(self, full_path):
-        '''This function takes an absolute path and attempts to find an inode.'''
-        try:
-            f = self.fs.open(full_path)
-        except:
-            print '[{0}] Cannot find file {1} in Partition {2} : {3}'.format(self.basename, 
-                full_path, self.partition_number, self.partition_name)
-            return
-            
-        file_entry = self.ProcessFile(f)
-            
-        if not file_entry:
-            return
-        if file_entry['filename'] in ['$OrphanFiles', '.', '..']:
-            return
-        return file_entry
-    
-    def ExtractTargetFiles(self, target_files):
-        for file  in target_files:
-            file_entry = self.AccessFileByPath(file)
-            if file_entry is None:
-                continue
-            else:
-                print '[{0}] Extracting {1} : {2}'.format(self.basename, file, 
-                                                        file_entry['inode'])
-                
-                target_directory = os.path.dirname(file)
-                self.ExtractFileByInode(file_entry, full_path=target_directory)
-    
-    def ExtractTargetDirectories(self, target_dirs):
-        for dir in target_dirs:
-            print '[{0}] Extracting {1}'.format(self.basename, dir)
-            self.ExtractDirectoryByName(dir)
+file_info = namedtuple('file_info', ['fs_info',
+									'path',
+									'file_handle', 
+									'filename',
+									'inode',
+									'file_type',
+									'file_size'])
+#file_info.__new__.__defaults__ = ('', '', '', '', '')
 
-    def CheckOutput(self, output_path):
-        try:
-            if not os.path.exists(output_path):
-                os.makedirs(output_path)
-        except:
-            print '[{0}] [Error] Error Creating Output Directory: {1}'.format(self.basename, 
-                                                            output_directory)
-        
-    def WalkFilesystem(self):
-        
-        self.QuickMode()
-        
-        if self.root_inode is None:
-            print '[{0}] [Error] Cannot identify root inode in Parition {1} : {2}'.format(self.basename, 
-                self.partition_number, self.partition_name)
-            return            
-        else:
-            cur_inode = self.root_inode
-            self.RecurseDirectories(cur_inode, os.path.sep)
-            
-    def RecurseDirectories(self, cur_inode, dir_path):
-        
-        if not cur_inode:
-            print '[{0}] Parsing {1} complete!'.format(self.basename, 
-                                                        self.partition_name)
-                
-        directories = []
-        
-        cwd = self.fs.open_dir(inode=cur_inode)
-        
-        self.DetectKeyDirectories(dir_path)
-        
-        for f in cwd:
-            file_entry = self.ProcessFile(f)
-            
-            if file_entry is None:
-                continue
-            if file_entry['filename'] in ['$OrphanFiles', '.', '..']:
-                continue
-                
-            full_path = os.path.join(dir_path, file_entry['filename'])
-            
-            if file_entry['file_type'] == pytsk3.TSK_FS_META_TYPE_DIR:
-                directories.append((file_entry['inode'], full_path))
-            elif file_entry['file_type'] == pytsk3.TSK_FS_META_TYPE_REG:
-                digest = self.HashFile(file_entry)
-                self.CreateDirectoryListing(file_entry['inode'], full_path, digest)
-                #print '{0} {1} {2} {3} {4}'.format(self.basename, 
-                #    self.partition_number, file_entry['inode'], full_path, digest)
-                if file_entry['filename'] in key_files:
-                    self.ExtractFileByInode(file_entry, full_path=dir_path)
-        
-        for inode, full_path in directories:
-            self.RecurseDirectories(inode, full_path)
-            
-    def DetectKeyDirectories(self, dir_path):
-        if dir_path in target_dirs:
-            self.ExtractDirectoryByName(dir_path)
-            
-    def HashFile(self, file_entry):    
-        offset = 0
-        size = file_entry['file_size']
-        BUFF_SIZE = 4096
-        md5 = hashlib.md5()
-    
-        while offset < size:
-            available_to_read = min(BUFF_SIZE, size - offset)
-            data = file_entry['file_obj'].read_random(offset, available_to_read)
-            if not data:
-                break
-            offset += len(data)
-            
-            md5.update(data)
-            
-        digest = md5.hexdigest()
-        return digest
-        
-    def CreateDirectoryListing(self, inode, dir_path, digest):
-        directory_listing = os.path.join(output_directory, self.basename, 
-                            'DirectoryListing-{0}.csv'.format(self.basename))
-        
-        row = [self.basename, str(self.partition_number), inode, dir_path, digest]
-        try:
-            with open(directory_listing, 'ab+') as csvfile:
-                writer = csv.writer(csvfile, delimiter=',')
-                writer.writerow(row)
-        except:
-            return
-            
-    def QuickMode(self):
-        self.ExtractTargetFiles(target_files)
-        self.ExtractTargetDirectories(target_dirs)
-           
-def Automate(image_file):
-    for fs_entry in i.filesystems:
-        filesystem = Filesystem(i.basename, fs_entry)
-        print '[{0}] Opening Partition {1} : {2} at offset {3}'.format(i.basename, 
-        filesystem.partition_number, filesystem.partition_name, filesystem.partition_block_offset)
+#################################################################### Funcs
 
-        if quick_flag:
-            filesystem.QuickMode()
-        else:
-            filesystem.WalkFilesystem()
-            
+def get_image_info(list_of_file_paths):
+	return [pytsk3.Img_Info(file_path) 
+			for file_path in list_of_file_paths]
+
+
+def get_volume_info(image_info):
+	return [partition(
+			image_info=image_info,
+			volume_info=part,
+			partition_number=part.addr,
+			description=part.desc.decode('utf-8'),
+			starting_offset_bytes=part.start,
+			starting_offset_sector=int(part.start*512),
+			partition_length=part.len)
+			for part in pytsk3.Volume_Info(image_info)]
+
+
+def get_fs_info(partition):
+	return pytsk3.FS_Info(partition.image_info, 
+			offset=partition.starting_offset_sector)
+
+
+def get_file(fs_info, path):
+	print 'debug-get_file {0}'.format(path)
+	file_handle = fs_info.open(path)
+	return file_info(
+			fs_info=fs_info,
+			path=path,
+			file_handle=file_handle,
+			filename=file_handle.info.name.name,
+			inode=file_handle.info.meta.addr,
+			file_type=str(file_handle.info.meta.type),
+			file_size=file_handle.info.meta.size)
+
+
+def list_dir_contents(fs_info, path):
+	print 'debug-list_dir_contents {0}'.format(path)
+	cwd = fs_info.open_dir(path=path)
+
+	files 		= [get_file(fs_info, 
+					os.path.join(path, _file.info.name.name))
+					for _file in cwd
+					if validate_file(_file)
+					if is_file(_file)]
+
+	directories = [get_file(fs_info, 
+					os.path.join(path, directory.info.name.name))
+					for directory in cwd
+					if validate_file(directory)
+					if is_directory(directory)]
+
+	return files, directories
+
+
+def walk_filesystem(fs_info):
+	return recurse_directory(fs_info, '/')
+
+
+def recurse_directory(fs_info, path):
+	print 'debug-recurse_directory {0}'.format(path)
+	files, directories = list_dir_contents(fs_info, path)
+
+	for directory in directories:
+		recurse_directory(fs_info, os.path.join(path, directory.filename))
+
+
+def read_file_contents(file_info):
+	offset = 0
+	size = file_info.file_size
+	BUFF_SIZE = 4096
+	data = ''
+
+	while offset < size:
+		available_to_read = min(BUFF_SIZE, size - offset)
+		data = file_info.file_handle.read_random(offset, 
+										available_to_read)
+		if not data:
+			break
+		offset += len(data)
+	return data
+
+
+def read_dir_contents(file_info):
+	files, directories = list_dir_contents(file_info.fs_info, file_info.path)
+	return (read_file_contents(_file) 
+			for _file in files)
+
+#################################################################### Filters
+
+def validate_file(file_handle):
+	if not file_handle:
+		return False
+	elif file_handle == None:
+		return False
+	elif not file_handle.info.meta:
+		return False
+	elif not file_handle.info.name:
+		return False
+	#elif fileObject.info.name.flags == pytsk3.TSK_FS_NAME_FLAG_UNALLOC:
+	#	return False
+	elif file_handle.info.name.name in ['$OrphanFiles', '.', '..']:
+		return False
+	else:
+		return True
+
+def is_directory(file_handle):
+		if file_handle.info.meta.type == pytsk3.TSK_FS_META_TYPE_DIR:
+			return True
+		else:
+			return False
+
+def is_file(file_handle):
+	if file_handle.info.meta.type == pytsk3.TSK_FS_META_TYPE_REG:
+		return True
+	else:
+		return False
+
+#################################################################### Main
+
 if __name__ == '__main__':
-    '''This is the primary logic for the script. This function iterates over 
-    all available partitions and attempts to extract target files and directories.'''
-    
-    parser = argparse.ArgumentParser(description='Description',
-        epilog='Epilogue')
-    parser.add_argument('--quick', help='''extract specific files and locations, 
-        do not walk file system.''', action='store_true')
-    parser.add_argument('outputdirectory', help='path to output directory')
-    parser.add_argument('imagefiles', help='path to image files', nargs='+')
-    args = parser.parse_args()
+	list_of_file_paths = ['../FRD1vWEB05p_COPY/FRD1vWEB05p.raw']
+	print [os.path.abspath(path) for path in list_of_file_paths]
 
-    global output_directory    
-    output_directory    = os.path.abspath(args.outputdirectory)
-    quick_flag          = args.quick
-    image_files         = args.imagefiles
-    
-    global target_dirs
-    global target_files
-    global key_files
-    
-    target_dirs         = ['/Windows/System32/config', '/Windows/Tasks', 
-        '/Windows/System32/winevt', '/Windows/System32/Drivers/etc', 
-        '/Windows/Prefetch']
-    target_files        = ['/$MFT', '/pagefile.sys', '/hiberfil.sys', '/$Logfile']
-    key_files           = ['NTUSER.DAT', 'usrclass.dat', 'Thumbs.db']
-    
-    worker_processes = []
-        
-    #multiprocessing.log_to_stderr(logging.DEBUG)
-    for url in image_files:
-        i = Image(url)
-        process = multiprocessing.Process(target=Automate, args=(i,))
-        worker_processes.append(process)
-        process.start()
+	images = get_image_info([os.path.abspath(path) 
+							for path in list_of_file_paths])
+
+	volumes = (get_volume_info(image) for image in images)
+
+
+	for partition_table in volumes:
+		for partition in partition_table:
+			if 'NTFS' in partition.description:
+				fs = get_fs_info(partition)
+				walk_filesystem(fs)
+			else:
+				continue
