@@ -115,8 +115,7 @@ def read_file_contents(file_info):
 
 	while offset < size:
 		available_to_read = min(BUFF_SIZE, size - offset)
-		data = file_info.file_handle.read_random(offset, 
-										available_to_read)
+		data = file_info.file_handle.read_random(offset, available_to_read)
 		if not data:
 			break
 		offset += len(data)
@@ -158,14 +157,14 @@ def is_file(file_handle):
 	else:
 		return False
 
-#################################################################### Main
+####################################################################
 
 if __name__ == '__main__':
 	list_of_file_paths = ['../FRD1vWEB05p_COPY/FRD1vWEB05p.raw']
 	print [os.path.abspath(path) for path in list_of_file_paths]
 
 	images = get_image_info([os.path.abspath(path) 
-							for path in list_of_file_paths])
+		for path in list_of_file_paths])
 
 	volumes = (get_volume_info(image) for image in images)
 
