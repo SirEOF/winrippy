@@ -21,22 +21,24 @@ from collections import namedtuple
 
 #################################################################### Structs
 
-partition = namedtuple('partition', ['image_info',
-									'volume_info', 
-									'partition_number',
-									'description',
-									'starting_offset_bytes',
-									'starting_offset_sector',
-									'partition_length'])
+partition = namedtuple('partition', 
+	['image_info',
+	'volume_info', 
+	'partition_number',
+	'description',
+	'starting_offset_bytes',
+	'starting_offset_sector',
+	'partition_length'])
 #partition.__new__.__defaults__ = ('', '', '', '', '', '')
 
-file_info = namedtuple('file_info', ['fs_info',
-									'path',
-									'file_handle', 
-									'filename',
-									'inode',
-									'file_type',
-									'file_size'])
+file_info = namedtuple('file_info', 
+	['fs_info',
+	'path',
+	'file_handle', 
+	'filename',
+	'inode',
+	'file_type',
+	'file_size'])
 #file_info.__new__.__defaults__ = ('', '', '', '', '')
 
 #################################################################### Funcs
@@ -48,14 +50,14 @@ def get_image_info(list_of_file_paths):
 
 def get_volume_info(image_info):
 	return [partition(
-			image_info=image_info,
-			volume_info=part,
-			partition_number=part.addr,
-			description=part.desc.decode('utf-8'),
-			starting_offset_bytes=part.start,
-			starting_offset_sector=int(part.start*512),
-			partition_length=part.len)
-			for part in pytsk3.Volume_Info(image_info)]
+		image_info=image_info,
+		volume_info=part,
+		partition_number=part.addr,
+		description=part.desc.decode('utf-8'),
+		starting_offset_bytes=part.start,
+		starting_offset_sector=int(part.start*512),
+		partition_length=part.len)
+		for part in pytsk3.Volume_Info(image_info)]
 
 
 def get_fs_info(partition):
@@ -67,30 +69,30 @@ def get_file(fs_info, path):
 	print 'debug-get_file {0}'.format(path)
 	file_handle = fs_info.open(path)
 	return file_info(
-			fs_info=fs_info,
-			path=path,
-			file_handle=file_handle,
-			filename=file_handle.info.name.name,
-			inode=file_handle.info.meta.addr,
-			file_type=str(file_handle.info.meta.type),
-			file_size=file_handle.info.meta.size)
+		fs_info=fs_info,
+		path=path,
+		file_handle=file_handle,
+		filename=file_handle.info.name.name,
+		inode=file_handle.info.meta.addr,
+		file_type=str(file_handle.info.meta.type),
+		file_size=file_handle.info.meta.size)
 
 
 def list_dir_contents(fs_info, path):
 	print 'debug-list_dir_contents {0}'.format(path)
 	cwd = fs_info.open_dir(path=path)
 
-	files 		= [get_file(fs_info, 
-					os.path.join(path, _file.info.name.name))
-					for _file in cwd
-					if validate_file(_file)
-					if is_file(_file)]
+	files = [get_file(fs_info, 
+		os.path.join(path, _file.info.name.name))
+		for _file in cwd
+		if validate_file(_file)
+		if is_file(_file)]
 
 	directories = [get_file(fs_info, 
-					os.path.join(path, directory.info.name.name))
-					for directory in cwd
-					if validate_file(directory)
-					if is_directory(directory)]
+		os.path.join(path, directory.info.name.name))
+		for directory in cwd
+		if validate_file(directory)
+		if is_directory(directory)]
 
 	return files, directories
 
