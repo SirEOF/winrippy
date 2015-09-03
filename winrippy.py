@@ -162,7 +162,7 @@ def is_file(file_handle):
 ####################################################################
 
 if __name__ == '__main__':
-	list_of_file_paths = ['../FRD1vWEB05p_COPY/FRD1vWEB05p.raw']
+	list_of_file_paths = ['../path/to/image.raw']
 	print [os.path.abspath(path) for path in list_of_file_paths]
 
 	images = get_image_info([os.path.abspath(path) 
